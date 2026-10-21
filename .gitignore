@@ -9,3 +9,4 @@ configure*
 Makefile*
 run-tests.php
 build/
+src-*/
