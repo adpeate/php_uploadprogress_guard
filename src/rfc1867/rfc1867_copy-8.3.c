@@ -226,7 +226,7 @@ static void free_filename(zval *el) {
 	zend_string_release_ex(filename, 0);
 }
 
-PHPAPI void destroy_uploaded_files_hash(void) /* {{{ */
+PHPAPI void hp_destroy_uploaded_files_hash(void) /* {{{ */
 {
 	zval *el;
 
@@ -776,6 +776,10 @@ SAPI_API SAPI_POST_HANDLER_FUNC(hp_rfc1867_post_handler) /* {{{ */
 	unsigned int llen = 0;
 	int upload_cnt = INI_INT("max_file_uploads");
 	int body_parts_cnt = INI_INT("max_multipart_body_parts");
+	/* 0 = the ini does not exist on this PHP (added in 8.0.28 / 8.1.16 / 8.2.3): use its default */
+	if (body_parts_cnt <= 0) {
+		body_parts_cnt = -1;
+	}
 	const zend_encoding *internal_encoding = zend_multibyte_get_internal_encoding();
 	php_rfc1867_getword_t getword;
 	php_rfc1867_getword_conf_t getword_conf;
@@ -1521,7 +1525,7 @@ fileupload_done:
 }
 /* }}} */
 
-SAPI_API void php_rfc1867_set_multibyte_callbacks(
+SAPI_API void hp_rfc1867_set_multibyte_callbacks(
 					php_rfc1867_encoding_translation_t encoding_translation,
 					php_rfc1867_get_detect_order_t get_detect_order,
 					php_rfc1867_set_input_encoding_t set_input_encoding,

@@ -26,6 +26,17 @@ parser, and makes it impossible for the parser to run out of memory in the first
 request (`Multipart body parts limit exceeded 0`) because it read an ini setting that only exists from
 8.0.28. If you installed v2.2.0 on a 7.x host, update.
 
+**v3.0.1** (same day): the v3.0.0 binaries for 8.2 to 8.5 were built on Debian 13 and required
+`GLIBC_2.38`, so they did not load on Debian 12 or older (`PHP Startup: Unable to load dynamic library`;
+PHP kept running without the guard). Every binary is now built on the oldest Debian that ships the
+minor and `build.sh` refuses anything above `GLIBC_2.14`. Also in v3.0.1: requests on hosts with
+`mbstring.encoding_translation=On` are handed to PHP's own parser (mbstring's multibyte hooks are
+file-static and cannot be mirrored; the callback detach still applies), the 8.0 to 8.3 copies no longer
+depend on `max_multipart_body_parts` existing (it was added mid-branch, so a stale 8.0.x/8.1.x/8.2.0-2
+install hit the 7.x failure), the parser copies no longer export PHP's own symbol names, `mode` is
+case-insensitive, any PHP newer than 8.6 counts as patched, and `cd src && phpize && ./configure && make`
+works again (config.m4 picks the parser copy for the PHP it is built against).
+
 ### What it does, silently
 
 Three things happen at process start. None of them is visible to an application: uploads, forms,
@@ -270,9 +281,12 @@ equal, and that is why the "stronger" claim is limited to the mechanism, not to 
   flavour (checked at load time). The prebuilt files are NTS x86_64 and load on any NTS build of that
   minor: Sury, Remi, cPanel EA4, DirectAdmin CustomBuild, the official Docker images. ZTS builds need
   a rebuild from source.
-* **libc:** the binaries import no versioned glibc symbols at all (only `php_rfc1867_callback`, three
-  `php_info_print_table_*` functions and loader glue, checked with `readelf --dyn-syms`), so a build
-  made on Debian loads on EL unchanged. Verified by loading on AlmaLinux 10.2 (glibc 2.39); older EL glibc only by symbol inspection.
+* **libc:** since v2 the binaries carry the multipart parser and therefore do import versioned glibc
+  symbols. They are built on the oldest Debian image that ships each minor (stretch for 5.6 to 7.3,
+  buster for 7.4 to 8.1, bullseye for 8.2 to 8.4, bookworm for 8.5) and `build.sh` refuses any file
+  that needs more than `GLIBC_2.14` (`objdump -T`), so they load on Debian 8+, Ubuntu 14.04+ and EL 7+.
+  Do not rebuild them on a glibc 2.38+ host without that check: `strtoll` then binds to
+  `__isoc23_strtoll@GLIBC_2.38` and the file refuses to load on anything older.
 
 ## Install
 

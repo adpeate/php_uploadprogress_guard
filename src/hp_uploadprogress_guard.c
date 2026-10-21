@@ -18,6 +18,11 @@
  *   ext/session's multipart upload-progress handler (php_session_rfc1867_callback) from main/rfc1867.c's
  *   callback pointer, so that handler is unreachable whatever session.upload_progress.* says.
  * All settings are PHP_INI_SYSTEM: php.ini / php-fpm.conf only, never .user.ini, .htaccess or ini_set().
+ *
+ * mbstring: its multibyte hooks (encoding detection, mb-aware getword/basename) are file-static in mbstring
+ * and registered into PHP's own rfc1867.c only, so the carried parser cannot run them. They are used solely
+ * when mbstring.encoding_translation is On (PHP_INI_PERDIR), so such a request is handed to PHP's native
+ * parser instead (the callback detach still applies to it); everything else is byte-identical.
  */
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -30,7 +35,7 @@
 #include "ext/standard/php_versioning.h"
 #include <string.h>
 
-#define HP_MPG_VERSION "3.0.0"
+#define HP_MPG_VERSION "3.0.1"
 #define HP_MPG_NAME "hp_uploadprogress_guard"
 
 SAPI_API SAPI_POST_HANDLER_FUNC(hp_rfc1867_post_handler);
@@ -40,19 +45,22 @@ static sapi_post_entry hp_upg_entry = { MULTIPART_CONTENT_TYPE, sizeof(MULTIPART
 static int hp_upg_installed = 0;
 static int hp_upg_detached = 0;
 static int hp_upg_php_patched = 0;
+static int hp_upg_mbstring = 0;
 static char hp_upg_php_version[32] = "";
 
-/* First PHP release of each branch that contains the official fix. Older branches keep their version
- * number when a vendor backports the fix, so they are never reported as patched here (mode=parse then
- * keeps the carried fixed parser, which is harmless on a patched build). */
+/* First PHP release of each branch that contains the official fix; any branch newer than the last entry
+ * was released with it. Older branches keep their version number when a vendor backports the fix, so they
+ * are never reported as patched here (mode=parse then keeps the carried fixed parser, which is harmless on
+ * a patched build). */
 static const struct { const char *branch; const char *fixed; } hp_upg_fixed[] = {
-	{ "8.5.", "8.5.12" }, { "8.4.", "8.4.27" }, { "8.3.", "8.3.36" }, { "8.2.", "8.2.35" }, { NULL, NULL }
+	{ "8.6.", "8.6.0" }, { "8.5.", "8.5.12" }, { "8.4.", "8.4.27" }, { "8.3.", "8.3.36" }, { "8.2.", "8.2.35" }, { NULL, NULL }
 };
 
 static void hp_upg_detect_patched(void)
 {
 	zval *v;
 	size_t i;
+	int major = 0, minor = 0;
 #if PHP_VERSION_ID < 70000
 	zval **vv;
 	if (zend_hash_find(EG(zend_constants), "PHP_VERSION", sizeof("PHP_VERSION"), (void **) &vv) == SUCCESS) {
@@ -77,6 +85,24 @@ static void hp_upg_detect_patched(void)
 			return;
 		}
 	}
+	{
+		/* no sscanf/strtol: on glibc >= 2.38 they bind to GLIBC_2.38 symbols and the .so stops loading on older hosts */
+		const char *p = hp_upg_php_version;
+		while (*p >= '0' && *p <= '9') major = major * 10 + (*p++ - '0');
+		if (*p == '.') {
+			p++;
+			while (*p >= '0' && *p <= '9') minor = minor * 10 + (*p++ - '0');
+		}
+	}
+	if (major > 8 || (major == 8 && minor > 6)) {
+		hp_upg_php_patched = 1;
+	}
+}
+
+/* mbstring.encoding_translation=On: only PHP's own parser has mbstring's hooks, see the header comment. */
+static int hp_upg_native_needed(void)
+{
+	return hp_upg_mbstring && INI_INT("mbstring.encoding_translation");
 }
 
 PHP_INI_BEGIN()
@@ -124,7 +150,7 @@ static SAPI_POST_HANDLER_FUNC(hp_upg_dispatch)
 {
 	const char *mode = INI_STR("hp_uploadprogress_guard.mode");
 
-	if (mode && strcmp(mode, "block") == 0 && !hp_upg_client_allowed()) {
+	if (mode && strcasecmp(mode, "block") == 0 && !hp_upg_client_allowed()) {
 		/* Nothing is read from the body; the SAPI discards it. */
 		SG(sapi_headers).http_response_code = 415;
 		/* error log only: never the output stream, whatever display_errors says */
@@ -136,8 +162,16 @@ static SAPI_POST_HANDLER_FUNC(hp_upg_dispatch)
 		return;
 	}
 #if PHP_VERSION_ID < 70000
+	if (hp_upg_native_needed()) {
+		rfc1867_post_handler(content_type_dup, arg TSRMLS_CC);
+		return;
+	}
 	hp_rfc1867_post_handler(content_type_dup, arg TSRMLS_CC);
 #else
+	if (hp_upg_native_needed()) {
+		rfc1867_post_handler(content_type_dup, arg);
+		return;
+	}
 	hp_rfc1867_post_handler(content_type_dup, arg);
 #endif
 }
@@ -146,10 +180,18 @@ static PHP_MINIT_FUNCTION(hp_uploadprogress_guard)
 {
 	REGISTER_INI_ENTRIES();
 	hp_upg_detect_patched();
+#ifdef HP_UPG_TEST_FORCE_PARSE
+	hp_upg_php_patched = 0; /* test builds only: exercise the carried parser on a patched engine */
+#endif
+#if PHP_VERSION_ID < 70000
+	hp_upg_mbstring = zend_hash_exists(&module_registry, "mbstring", sizeof("mbstring"));
+#else
+	hp_upg_mbstring = zend_hash_str_exists(&module_registry, "mbstring", sizeof("mbstring") - 1);
+#endif
 	{
 		const char *mode = INI_STR("hp_uploadprogress_guard.mode");
 		/* native: never replace. parse on a PHP that already carries the fix: step aside too. */
-		if (!((mode && strcmp(mode, "native") == 0) || (hp_upg_php_patched && !(mode && strcmp(mode, "block") == 0)))) {
+		if (!((mode && strcasecmp(mode, "native") == 0) || (hp_upg_php_patched && !(mode && strcasecmp(mode, "block") == 0)))) {
 #if PHP_VERSION_ID < 70000
 			sapi_unregister_post_entry(&hp_upg_entry TSRMLS_CC);
 			if (sapi_register_post_entry(&hp_upg_entry TSRMLS_CC) == SUCCESS) {
@@ -182,6 +224,7 @@ static PHP_MINFO_FUNCTION(hp_uploadprogress_guard)
 	php_info_print_table_row(2, "multipart/form-data handler replaced", hp_upg_installed ? "yes" : "no");
 	php_info_print_table_row(2, "mode", INI_STR("hp_uploadprogress_guard.mode"));
 	php_info_print_table_row(2, "parser memory-headroom guard", hp_upg_installed ? "yes (memory_limit > 0)" : "no (parser not replaced)");
+	php_info_print_table_row(2, "mbstring.encoding_translation requests", hp_upg_installed ? (hp_upg_mbstring ? "handed to PHP's parser" : "n/a (mbstring not loaded)") : "n/a");
 	php_info_print_table_row(2, "running PHP already carries the official fix", hp_upg_php_patched ? (hp_upg_installed ? "yes" : "yes (parser replacement skipped)") : "no");
 	php_info_print_table_row(2, "session.upload_progress handler detached", hp_upg_detached ? "yes" : "no");
 	php_info_print_table_end();
@@ -190,6 +233,7 @@ static PHP_MINFO_FUNCTION(hp_uploadprogress_guard)
 
 static const zend_module_dep hp_upg_deps[] = {
 	ZEND_MOD_OPTIONAL("session")
+	ZEND_MOD_OPTIONAL("mbstring")
 	ZEND_MOD_END
 };
 

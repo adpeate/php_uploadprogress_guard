@@ -123,7 +123,7 @@ static void safe_php_register_variable(char *var, char *strval, size_t val_len, 
 #define UPLOAD_ERROR_F    7  /* Failed to write file to disk */
 #define UPLOAD_ERROR_X    8  /* File upload stopped by extension */
 
-void php_rfc1867_register_constants(void) /* {{{ */
+void hp_rfc1867_register_constants(void) /* {{{ */
 {
 	REGISTER_MAIN_LONG_CONSTANT("UPLOAD_ERR_OK",         UPLOAD_ERROR_OK, CONST_CS | CONST_PERSISTENT);
 	REGISTER_MAIN_LONG_CONSTANT("UPLOAD_ERR_INI_SIZE",   UPLOAD_ERROR_A,  CONST_CS | CONST_PERSISTENT);
@@ -250,7 +250,7 @@ static void free_filename(zval *el) {
 	zend_string_release_ex(filename, 0);
 }
 
-PHPAPI void destroy_uploaded_files_hash(void) /* {{{ */
+PHPAPI void hp_destroy_uploaded_files_hash(void) /* {{{ */
 {
 	zend_hash_apply(SG(rfc1867_uploaded_files), unlink_filename);
 	zend_hash_destroy(SG(rfc1867_uploaded_files));
@@ -1433,7 +1433,7 @@ fileupload_done:
 }
 /* }}} */
 
-SAPI_API void php_rfc1867_set_multibyte_callbacks(
+SAPI_API void hp_rfc1867_set_multibyte_callbacks(
 					php_rfc1867_encoding_translation_t encoding_translation,
 					php_rfc1867_get_detect_order_t get_detect_order,
 					php_rfc1867_set_input_encoding_t set_input_encoding,

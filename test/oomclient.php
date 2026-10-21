@@ -18,6 +18,9 @@ switch ($scenario) {
 		$parts[] = ["--$b\r\nContent-Disposition: form-data; name=\"b\"\r\n\r\n", 2, function ($w) { $w('22'); }];
 		$parts[] = ["--$b\r\nContent-Disposition: form-data; name=\"f\"; filename=\"blob.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n", 100000, function ($w) { $w(str_repeat('x', 100000)); }];
 		break;
+	case 'latin1':   /* one field holding the single byte 0xE9: mbstring.encoding_translation turns it into UTF-8 */
+		$parts[] = ["--$b\r\nContent-Disposition: form-data; name=\"v\"\r\n\r\n", 1, function ($w) { $w("\xE9"); }];
+		break;
 	case 'bigfield':
 	case 'chunked':
 		$parts[] = ["--$b\r\nContent-Disposition: form-data; name=\"big\"\r\n\r\n", $n * $MB, function ($w) use ($n, $MB) {
